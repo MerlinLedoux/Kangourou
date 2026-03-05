@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python main.py)",
+      "Bash(conda run -n kangourou python main.py)",
+      "Bash(conda run -n kangourou python -c \"import arcade; funcs = [f for f in dir\\(arcade\\) if ''rect'' in f.lower\\(\\) or ''rectangle'' in f.lower\\(\\)]; print\\(''\\\\n''.join\\(funcs\\)\\)\")"
+    ]
+  }
+}
