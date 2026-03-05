@@ -3,7 +3,9 @@
     "allow": [
       "Bash(python main.py)",
       "Bash(conda run -n kangourou python main.py)",
-      "Bash(conda run -n kangourou python -c \"import arcade; funcs = [f for f in dir\\(arcade\\) if ''rect'' in f.lower\\(\\) or ''rectangle'' in f.lower\\(\\)]; print\\(''\\\\n''.join\\(funcs\\)\\)\")"
+      "Bash(conda run -n kangourou python -c \"import arcade; funcs = [f for f in dir\\(arcade\\) if ''rect'' in f.lower\\(\\) or ''rectangle'' in f.lower\\(\\)]; print\\(''\\\\n''.join\\(funcs\\)\\)\")",
+      "Bash(conda run -n kangourou python check_shapes.py)",
+      "Bash(conda run -n kangourou python -c \"from src.ui.game_window import GameWindow; print\\(''OK''\\)\")"
     ]
   }
 }

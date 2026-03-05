@@ -3,8 +3,8 @@ from src.ui.game_window import GameWindow
 
 
 def main():
-    window = GameWindow()
-    arcade.run()
+    window = GameWindow("Dino")   #Crée la fenêtre et initialise tout
+    arcade.run()            #Lance une boucle infinie du jeu
 
 
 if __name__ == "__main__":

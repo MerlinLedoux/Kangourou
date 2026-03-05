@@ -1,7 +1,7 @@
 import arcade
 
 from ..game import Game
-from ..pieces import PIECE_COLORS, PIECE_ORIENTATIONS
+from ..pieces import PIECE_COLORS
 
 # ---------------------------------------------------------------------------
 # Constantes de mise en page
@@ -10,14 +10,14 @@ WINDOW_WIDTH  = 1200
 WINDOW_HEIGHT = 780
 WINDOW_TITLE  = "Pentaminos"
 
-CELL_SIZE   = 60
-BOARD_ROWS  = 6
-BOARD_COLS  = 10
+MAX_CELL_SIZE = 60   # taille max quand la forme est petite
 
+# Coin bas-gauche du plateau sur l'ecran
 BOARD_LEFT   = 40
 BOARD_BOTTOM = 190
 
-SIDEBAR_X     = BOARD_LEFT + BOARD_COLS * CELL_SIZE + 55
+# Barre laterale (pieces disponibles)
+SIDEBAR_X     = 720
 SIDEBAR_WIDTH = WINDOW_WIDTH - SIDEBAR_X - 15
 
 PREVIEW_CELL  = 18
@@ -27,35 +27,38 @@ PREVIEW_BOX_H = 140
 
 COLOR_BG         = (28,  30,  42)
 COLOR_BOARD_BG   = (44,  47,  64)
+COLOR_BOARD_VOID = (22,  24,  34)   # cases hors de la forme
 COLOR_GRID       = (68,  72,  100)
 COLOR_SIDEBAR_BG = (36,  38,  52)
 COLOR_TEXT       = (210, 212, 225)
 COLOR_TEXT_DIM   = (140, 143, 165)
 
+DEFAULT_SHAPE = "6x10"
+
 
 # ---------------------------------------------------------------------------
-# Helpers : wrappers autour de la nouvelle API Arcade 3.x
-# Les fonctions Arcade 3.x prennent (left, bottom, width, height)
-# alors que l'ancienne API prenait (center_x, center_y, width, height).
+# Helpers de dessin (API Arcade 3.x)
 # ---------------------------------------------------------------------------
 
 def _fill(cx, cy, w, h, color):
-    """Rectangle plein, centre sur (cx, cy)."""
     arcade.draw_lbwh_rectangle_filled(cx - w / 2, cy - h / 2, w, h, color)
 
 
 def _outline(cx, cy, w, h, color, border_width=1):
-    """Rectangle vide (contour), centre sur (cx, cy)."""
     arcade.draw_lbwh_rectangle_outline(cx - w / 2, cy - h / 2, w, h, color, border_width)
 
 
+# ---------------------------------------------------------------------------
+# Fenetre principale
+# ---------------------------------------------------------------------------
+
 class GameWindow(arcade.Window):
 
-    def __init__(self):
+    def __init__(self, shape_name: str = DEFAULT_SHAPE):
         super().__init__(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, resizable=False)
         self.background_color = COLOR_BG
 
-        self.game = Game(BOARD_ROWS, BOARD_COLS)
+        self.game = Game(shape_name)
 
         self.dragging: str | None = None
         self.drag_x = 0
@@ -63,11 +66,42 @@ class GameWindow(arcade.Window):
         self.ghost_row: int | None = None
         self.ghost_col: int | None = None
 
+        # Taille d'une case calculee pour que le plateau tienne dans la fenetre
+        available_w = SIDEBAR_X - BOARD_LEFT - 20
+        available_h = WINDOW_HEIGHT - BOARD_BOTTOM - 80
+        cell_by_w   = available_w // self.game.board.cols
+        cell_by_h   = available_h // self.game.board.rows
+        self.cell_size = min(cell_by_w, cell_by_h, MAX_CELL_SIZE)
+
         self._sidebar_pos: dict = self._compute_sidebar_positions()
-        self.won = False
+        self.won    = False
+        self.elapsed = 0.0
 
     # ------------------------------------------------------------------
-    # Mise en page
+    # Conversions coordonnees
+    # ------------------------------------------------------------------
+
+    def _board_to_screen(self, row: int, col: int) -> tuple:
+        """Centre de la case (row, col) en pixels Arcade."""
+        b = self.game.board
+        x = BOARD_LEFT + (col - b.min_col) * self.cell_size + self.cell_size / 2
+        y = BOARD_BOTTOM + (b.max_row - row) * self.cell_size + self.cell_size / 2
+        return x, y
+
+    def _screen_to_board(self, x: float, y: float) -> tuple:
+        """Case du plateau sous le curseur (peut etre hors de la forme)."""
+        b = self.game.board
+        col = b.min_col + int((x - BOARD_LEFT) / self.cell_size)
+        row = b.max_row - int((y - BOARD_BOTTOM) / self.cell_size)
+        return row, col
+
+    def _is_valid_cell(self, x: float, y: float) -> bool:
+        """Vrai si le curseur est sur une case valide du plateau."""
+        row, col = self._screen_to_board(x, y)
+        return (row, col) in self.game.board.valid_cells
+
+    # ------------------------------------------------------------------
+    # Mise en page de la barre laterale
     # ------------------------------------------------------------------
 
     def _compute_sidebar_positions(self) -> dict:
@@ -83,28 +117,12 @@ class GameWindow(arcade.Window):
         return positions
 
     # ------------------------------------------------------------------
-    # Conversions coordonnees
-    # ------------------------------------------------------------------
-
-    def _board_to_screen(self, row: int, col: int) -> tuple:
-        x = BOARD_LEFT + col * CELL_SIZE + CELL_SIZE / 2
-        y = BOARD_BOTTOM + (BOARD_ROWS - 1 - row) * CELL_SIZE + CELL_SIZE / 2
-        return x, y
-
-    def _screen_to_board(self, x: float, y: float) -> tuple:
-        col = int((x - BOARD_LEFT) / CELL_SIZE)
-        row = BOARD_ROWS - 1 - int((y - BOARD_BOTTOM) / CELL_SIZE)
-        return row, col
-
-    def _is_over_board(self, x: float, y: float) -> bool:
-        return (BOARD_LEFT <= x < BOARD_LEFT + BOARD_COLS * CELL_SIZE and
-                BOARD_BOTTOM <= y < BOARD_BOTTOM + BOARD_ROWS * CELL_SIZE)
-
-    # ------------------------------------------------------------------
     # Primitives de dessin
     # ------------------------------------------------------------------
 
-    def _draw_cell(self, cx: float, cy: float, color: tuple, size: int = CELL_SIZE):
+    def _draw_cell(self, cx: float, cy: float, color: tuple, size: int = 0):
+        if size == 0:
+            size = self.cell_size
         margin = 2
         s = size - margin
         _fill(cx, cy, s, s, color)
@@ -122,10 +140,10 @@ class GameWindow(arcade.Window):
                             color: tuple, cell_size: int = PREVIEW_CELL, alpha: int = 255):
         if not cells:
             return
-        rows = [r for r, c in cells]
-        cols = [c for r, c in cells]
-        cr = (max(rows) + min(rows)) / 2
-        cc = (max(cols) + min(cols)) / 2
+        rows_ = [r for r, _ in cells]
+        cols_ = [c for _, c in cells]
+        cr = (max(rows_) + min(rows_)) / 2
+        cc = (max(cols_) + min(cols_)) / 2
         r, g, b = color[:3]
         col = (r, g, b, alpha)
         m = 1
@@ -134,6 +152,14 @@ class GameWindow(arcade.Window):
             py = center_y - (row - cr) * cell_size
             _fill(px, py, cell_size - m, cell_size - m, col)
             _outline(px, py, cell_size - m, cell_size - m, (0, 0, 0, 50))
+
+    # ------------------------------------------------------------------
+    # on_update
+    # ------------------------------------------------------------------
+
+    def on_update(self, delta_time: float):
+        if not self.won:
+            self.elapsed += delta_time
 
     # ------------------------------------------------------------------
     # on_draw
@@ -151,19 +177,20 @@ class GameWindow(arcade.Window):
             self._draw_victory()
 
     def _draw_board(self):
-        board_cx = BOARD_LEFT + BOARD_COLS * CELL_SIZE / 2
-        board_cy = BOARD_BOTTOM + BOARD_ROWS * CELL_SIZE / 2
-        bw = BOARD_COLS * CELL_SIZE
-        bh = BOARD_ROWS * CELL_SIZE
-        # Bordure
-        _fill(board_cx, board_cy, bw + 4, bh + 4, (55, 58, 80))
-        # Fond
-        _fill(board_cx, board_cy, bw, bh, COLOR_BOARD_BG)
-        # Grille
-        for r in range(BOARD_ROWS):
-            for c in range(BOARD_COLS):
-                cx, cy = self._board_to_screen(r, c)
-                _outline(cx, cy, CELL_SIZE - 1, CELL_SIZE - 1, COLOR_GRID)
+        board = self.game.board
+
+        # Boite englobante (fond sombre pour les cases hors forme)
+        bw = board.cols * self.cell_size
+        bh = board.rows * self.cell_size
+        bx = BOARD_LEFT + bw / 2
+        by = BOARD_BOTTOM + bh / 2
+        _fill(bx, by, bw + 4, bh + 4, (22, 24, 34))
+
+        # Uniquement les cases valides
+        for (r, c) in board.valid_cells:
+            cx, cy = self._board_to_screen(r, c)
+            _fill(cx, cy, self.cell_size, self.cell_size, COLOR_BOARD_BG)
+            _outline(cx, cy, self.cell_size - 1, self.cell_size - 1, COLOR_GRID)
 
     def _draw_placed_pieces(self):
         for name, (cells, row, col) in self.game.placed_pieces.items():
@@ -177,9 +204,9 @@ class GameWindow(arcade.Window):
         ghost_color = (80, 240, 120, 150) if can else (240, 80, 80, 150)
         for dr, dc in cells:
             r, c = self.ghost_row + dr, self.ghost_col + dc
-            if 0 <= r < BOARD_ROWS and 0 <= c < BOARD_COLS:
+            if (r, c) in self.game.board.valid_cells:
                 cx, cy = self._board_to_screen(r, c)
-                _fill(cx, cy, CELL_SIZE - 2, CELL_SIZE - 2, ghost_color)
+                _fill(cx, cy, self.cell_size - 2, self.cell_size - 2, ghost_color)
 
     def _draw_sidebar(self):
         _fill(SIDEBAR_X + SIDEBAR_WIDTH / 2, WINDOW_HEIGHT / 2,
@@ -190,16 +217,15 @@ class GameWindow(arcade.Window):
                          anchor_x="center", anchor_y="center")
 
         for name, (cx, cy) in self._sidebar_pos.items():
-            cells = self.game.get_orientation(name)
+            cells  = self.game.get_orientation(name)
             placed = name in self.game.placed_pieces
 
             if name == self.dragging:
                 self._draw_piece_preview(cells, cx, cy, PIECE_COLORS[name], alpha=50)
             elif placed:
                 self._draw_piece_preview(cells, cx, cy, (90, 93, 115), alpha=180)
-                arcade.draw_text("OK", cx + 32, cy + 32,
-                                 (80, 200, 100), 12, bold=True,
-                                 anchor_x="center", anchor_y="center")
+                arcade.draw_text("OK", cx + 32, cy + 32, (80, 200, 100), 12,
+                                 bold=True, anchor_x="center", anchor_y="center")
             else:
                 self._draw_piece_preview(cells, cx, cy, PIECE_COLORS[name])
 
@@ -211,20 +237,28 @@ class GameWindow(arcade.Window):
     def _draw_dragging(self):
         if self.dragging is None:
             return
-        if not self._is_over_board(self.drag_x, self.drag_y):
+        if not self._is_valid_cell(self.drag_x, self.drag_y):
             cells = self.game.get_orientation(self.dragging)
             self._draw_piece_preview(cells, self.drag_x, self.drag_y,
                                      PIECE_COLORS[self.dragging], cell_size=26)
 
     def _draw_hud(self):
-        board_top = BOARD_BOTTOM + BOARD_ROWS * CELL_SIZE
+        board = self.game.board
+        board_top_y = BOARD_BOTTOM + board.rows * self.cell_size
+
         remaining = len(self.game.available_pieces)
         if self.dragging and self.dragging in self.game.available_pieces:
             remaining -= 1
+
+        minutes  = int(self.elapsed) // 60
+        secondes = int(self.elapsed) % 60
+
         arcade.draw_text(
-            f"Plateau {BOARD_ROWS}x{BOARD_COLS}   |   "
-            f"Restantes : {remaining}   |   Posees : {len(self.game.placed_pieces)}",
-            BOARD_LEFT, board_top + 12, COLOR_TEXT, 14)
+            f"Forme : {self.game.shape_name}   |   "
+            f"Restantes : {remaining}   |   "
+            f"Posees : {len(self.game.placed_pieces)}   |   "
+            f"{minutes:02d}:{secondes:02d}",
+            BOARD_LEFT, board_top_y + 12, COLOR_TEXT, 14)
 
         instructions = [
             "R : Tourner la piece",
@@ -253,16 +287,14 @@ class GameWindow(arcade.Window):
     # Evenements souris
     # ------------------------------------------------------------------
 
-    def on_mouse_press(self, x, y, button, modifiers):
+    def on_mouse_press(self, x, y, button, _modifiers):
         if self.won:
             return
 
         if button == arcade.MOUSE_BUTTON_LEFT:
             # Clic sur une piece disponible dans la barre laterale
             for name, (cx, cy) in self._sidebar_pos.items():
-                if name not in self.game.available_pieces:
-                    continue
-                if name == self.dragging:
+                if name not in self.game.available_pieces or name == self.dragging:
                     continue
                 if abs(x - cx) < PREVIEW_BOX_W // 2 and abs(y - cy) < PREVIEW_BOX_H // 2 - 10:
                     self.dragging = name
@@ -270,18 +302,17 @@ class GameWindow(arcade.Window):
                     return
 
             # Clic sur une piece posee sur le plateau pour la reprendre
-            if self._is_over_board(x, y):
-                row, col = self._screen_to_board(x, y)
-                piece_at = self.game.board.get_piece_at(row, col)
-                if piece_at:
-                    self.game.pick_up(piece_at)
-                    self.dragging = piece_at
-                    self.drag_x, self.drag_y = x, y
+            row, col = self._screen_to_board(x, y)
+            piece_at = self.game.board.get_piece_at(row, col)
+            if piece_at:
+                self.game.pick_up(piece_at)
+                self.dragging = piece_at
+                self.drag_x, self.drag_y = x, y
 
     def on_mouse_motion(self, x, y, dx, dy):
         if self.dragging:
             self.drag_x, self.drag_y = x, y
-            if self._is_over_board(x, y):
+            if self._is_valid_cell(x, y):
                 self.ghost_row, self.ghost_col = self._screen_to_board(x, y)
             else:
                 self.ghost_row = self.ghost_col = None
@@ -293,9 +324,8 @@ class GameWindow(arcade.Window):
         if button != arcade.MOUSE_BUTTON_LEFT or self.dragging is None:
             return
 
-        if self._is_over_board(x, y):
-            row, col = self._screen_to_board(x, y)
-            self.game.try_place(self.dragging, row, col)
+        row, col = self._screen_to_board(x, y)
+        self.game.try_place(self.dragging, row, col)
 
         self.dragging = None
         self.ghost_row = self.ghost_col = None
@@ -312,7 +342,8 @@ class GameWindow(arcade.Window):
             self.game.reset()
             self.dragging = None
             self.ghost_row = self.ghost_col = None
-            self.won = False
+            self.won    = False
+            self.elapsed = 0.0
         elif self.dragging:
             if key == arcade.key.R:
                 self.game.rotate(self.dragging)
