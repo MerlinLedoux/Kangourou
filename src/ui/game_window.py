@@ -2,6 +2,7 @@ import arcade
 
 from ..game import Game
 from ..pieces import PIECE_COLORS
+from ..shapes import SHAPES
 
 # ---------------------------------------------------------------------------
 # Constantes de mise en page
@@ -27,11 +28,18 @@ PREVIEW_BOX_H = 140
 
 COLOR_BG         = (28,  30,  42)
 COLOR_BOARD_BG   = (44,  47,  64)
-COLOR_BOARD_VOID = (22,  24,  34)   # cases hors de la forme
+COLOR_BOARD_VOID = (22,  24,  34)
 COLOR_GRID       = (68,  72,  100)
 COLOR_SIDEBAR_BG = (36,  38,  52)
 COLOR_TEXT       = (210, 212, 225)
 COLOR_TEXT_DIM   = (140, 143, 165)
+
+# Dropdown
+DD_X     = SIDEBAR_X + 10           # bord gauche
+DD_W     = SIDEBAR_WIDTH - 20        # largeur
+DD_BTN_H = 30                        # hauteur du bouton
+DD_ITEM_H = 26                       # hauteur d'un element de liste
+DD_BTN_Y  = WINDOW_HEIGHT - 38       # centre y du bouton (en haut de la barre)
 
 DEFAULT_SHAPE = "6x10"
 
@@ -73,6 +81,7 @@ class GameWindow(arcade.Window):
         cell_by_h   = available_h // self.game.board.rows
         self.cell_size = min(cell_by_w, cell_by_h, MAX_CELL_SIZE)
 
+        self.dropdown_open = False
         self._sidebar_pos: dict = self._compute_sidebar_positions()
         self.won    = False
         self.elapsed = 0.0
@@ -120,7 +129,7 @@ class GameWindow(arcade.Window):
 
     def _compute_sidebar_positions(self) -> dict:
         names = sorted(PIECE_COLORS.keys())
-        start_y = WINDOW_HEIGHT - 120
+        start_y = WINDOW_HEIGHT - 150
         positions = {}
         for i, name in enumerate(names):
             col_idx = i % PREVIEW_COLS
@@ -168,6 +177,24 @@ class GameWindow(arcade.Window):
             _outline(px, py, cell_size - m, cell_size - m, (0, 0, 0, 50))
 
     # ------------------------------------------------------------------
+    # Changement de forme
+    # ------------------------------------------------------------------
+
+    def _change_shape(self, shape_name: str):
+        """Reinitialise le jeu avec une nouvelle forme et recalcule la taille des cases."""
+        self.game = Game(shape_name)
+        available_w = SIDEBAR_X - BOARD_LEFT - 20
+        available_h = WINDOW_HEIGHT - BOARD_BOTTOM - 80
+        cell_by_w   = available_w // self.game.board.cols
+        cell_by_h   = available_h // self.game.board.rows
+        self.cell_size = min(cell_by_w, cell_by_h, MAX_CELL_SIZE)
+        self.dragging       = None
+        self.ghost_row      = self.ghost_col = None
+        self.won            = False
+        self.elapsed        = 0.0
+        self.dropdown_open  = False
+
+    # ------------------------------------------------------------------
     # on_update
     # ------------------------------------------------------------------
 
@@ -189,6 +216,8 @@ class GameWindow(arcade.Window):
         self._draw_hud()
         if self.won:
             self._draw_victory()
+        # Le dropdown s'affiche en dernier pour etre au-dessus de tout
+        self._draw_dropdown()
 
     def _draw_board(self):
         board = self.game.board
@@ -227,7 +256,7 @@ class GameWindow(arcade.Window):
               SIDEBAR_WIDTH, WINDOW_HEIGHT, COLOR_SIDEBAR_BG)
 
         arcade.draw_text("PIECES", SIDEBAR_X + SIDEBAR_WIDTH / 2,
-                         WINDOW_HEIGHT - 38, COLOR_TEXT, 17, bold=True,
+                         WINDOW_HEIGHT - 75, COLOR_TEXT, 17, bold=True,
                          anchor_x="center", anchor_y="center")
 
         for name, (cx, cy) in self._sidebar_pos.items():
@@ -268,7 +297,6 @@ class GameWindow(arcade.Window):
         secondes = int(self.elapsed) % 60
 
         arcade.draw_text(
-            f"Forme : {self.game.shape_name}   |   "
             f"Restantes : {remaining}   |   "
             f"Posees : {len(self.game.placed_pieces)}   |   "
             f"{minutes:02d}:{secondes:02d}",
@@ -297,31 +325,79 @@ class GameWindow(arcade.Window):
                          COLOR_TEXT, 22,
                          anchor_x="center", anchor_y="center")
 
+    def _draw_dropdown(self):
+        """Dessine le bouton de selection de forme et la liste deroulante."""
+        shapes     = list(SHAPES.keys())
+        btn_cx     = DD_X + DD_W / 2
+        arrow      = "▲" if self.dropdown_open else "▼"
+
+        # Bouton principal
+        btn_color = (70, 75, 105) if self.dropdown_open else (52, 56, 80)
+        _fill(btn_cx, DD_BTN_Y, DD_W, DD_BTN_H, btn_color)
+        _outline(btn_cx, DD_BTN_Y, DD_W, DD_BTN_H, (100, 105, 145), 2)
+        arcade.draw_text(f"Niveau : {self.game.shape_name}  {arrow}",
+                         btn_cx, DD_BTN_Y, COLOR_TEXT, 12, bold=True,
+                         anchor_x="center", anchor_y="center")
+
+        if not self.dropdown_open:
+            return
+
+        # Liste des options (s'ouvre vers le bas)
+        for i, name in enumerate(shapes):
+            item_y = DD_BTN_Y - DD_BTN_H / 2 - DD_ITEM_H / 2 - i * DD_ITEM_H
+            is_current = name == self.game.shape_name
+            bg = (85, 110, 160) if is_current else (45, 48, 68)
+            _fill(btn_cx, item_y, DD_W, DD_ITEM_H - 2, bg)
+            _outline(btn_cx, item_y, DD_W, DD_ITEM_H - 2, (80, 85, 115))
+            col = (255, 255, 255) if is_current else COLOR_TEXT
+            arcade.draw_text(name, btn_cx, item_y, col, 12,
+                             anchor_x="center", anchor_y="center")
+
     # ------------------------------------------------------------------
     # Evenements souris
     # ------------------------------------------------------------------
 
     def on_mouse_press(self, x, y, button, _modifiers):
+        if button != arcade.MOUSE_BUTTON_LEFT:
+            return
+
+        # --- Dropdown ---
+        btn_cx = DD_X + DD_W / 2
+        # Clic sur le bouton principal
+        if abs(x - btn_cx) < DD_W / 2 and abs(y - DD_BTN_Y) < DD_BTN_H / 2:
+            self.dropdown_open = not self.dropdown_open
+            return
+
+        # Clic sur un element de la liste
+        if self.dropdown_open:
+            shapes = list(SHAPES.keys())
+            for i, name in enumerate(shapes):
+                item_y = DD_BTN_Y - DD_BTN_H / 2 - DD_ITEM_H / 2 - i * DD_ITEM_H
+                if abs(x - btn_cx) < DD_W / 2 and abs(y - item_y) < DD_ITEM_H / 2:
+                    self._change_shape(name)
+                    return
+            # Clic ailleurs : ferme le dropdown
+            self.dropdown_open = False
+
         if self.won:
             return
 
-        if button == arcade.MOUSE_BUTTON_LEFT:
-            # Clic sur une piece disponible dans la barre laterale
-            for name, (cx, cy) in self._sidebar_pos.items():
-                if name not in self.game.available_pieces or name == self.dragging:
-                    continue
-                if abs(x - cx) < PREVIEW_BOX_W // 2 and abs(y - cy) < PREVIEW_BOX_H // 2 - 10:
-                    self.dragging = name
-                    self.drag_x, self.drag_y = x, y
-                    return
-
-            # Clic sur une piece posee sur le plateau pour la reprendre
-            row, col = self._screen_to_board(x, y)
-            piece_at = self.game.board.get_piece_at(row, col)
-            if piece_at:
-                self.game.pick_up(piece_at)
-                self.dragging = piece_at
+        # Clic sur une piece disponible dans la barre laterale
+        for name, (cx, cy) in self._sidebar_pos.items():
+            if name not in self.game.available_pieces or name == self.dragging:
+                continue
+            if abs(x - cx) < PREVIEW_BOX_W // 2 and abs(y - cy) < PREVIEW_BOX_H // 2 - 10:
+                self.dragging = name
                 self.drag_x, self.drag_y = x, y
+                return
+
+        # Clic sur une piece posee sur le plateau pour la reprendre
+        row, col = self._screen_to_board(x, y)
+        piece_at = self.game.board.get_piece_at(row, col)
+        if piece_at:
+            self.game.pick_up(piece_at)
+            self.dragging = piece_at
+            self.drag_x, self.drag_y = x, y
 
     def on_mouse_motion(self, x, y, dx, dy):
         if self.dragging:
