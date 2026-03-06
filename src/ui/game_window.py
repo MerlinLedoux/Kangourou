@@ -95,10 +95,24 @@ class GameWindow(arcade.Window):
         row = b.max_row - int((y - BOARD_BOTTOM) / self.cell_size)
         return row, col
 
-    def _is_valid_cell(self, x: float, y: float) -> bool:
-        """Vrai si le curseur est sur une case valide du plateau."""
-        row, col = self._screen_to_board(x, y)
-        return (row, col) in self.game.board.valid_cells
+    def _is_over_board_area(self, x: float, y: float) -> bool:
+        """Vrai si le curseur est dans la zone rectangulaire du plateau."""
+        b = self.game.board
+        return (BOARD_LEFT <= x < BOARD_LEFT + b.cols * self.cell_size and
+                BOARD_BOTTOM <= y < BOARD_BOTTOM + b.rows * self.cell_size)
+
+    def _centered_anchor(self, x: float, y: float) -> tuple:
+        """
+        Calcule l'ancre (row, col) pour que le centre de la piece
+        soit sous le curseur plutot que le coin (0,0).
+        """
+        mouse_row, mouse_col = self._screen_to_board(x, y)
+        cells = self.game.get_orientation(self.dragging)
+        rows_ = [r for r, _ in cells]
+        cols_ = [c for _, c in cells]
+        center_dr = round((max(rows_) + min(rows_)) / 2)
+        center_dc = round((max(cols_) + min(cols_)) / 2)
+        return mouse_row - center_dr, mouse_col - center_dc
 
     # ------------------------------------------------------------------
     # Mise en page de la barre laterale
@@ -237,7 +251,7 @@ class GameWindow(arcade.Window):
     def _draw_dragging(self):
         if self.dragging is None:
             return
-        if not self._is_valid_cell(self.drag_x, self.drag_y):
+        if not self._is_over_board_area(self.drag_x, self.drag_y):
             cells = self.game.get_orientation(self.dragging)
             self._draw_piece_preview(cells, self.drag_x, self.drag_y,
                                      PIECE_COLORS[self.dragging], cell_size=26)
@@ -312,8 +326,8 @@ class GameWindow(arcade.Window):
     def on_mouse_motion(self, x, y, dx, dy):
         if self.dragging:
             self.drag_x, self.drag_y = x, y
-            if self._is_valid_cell(x, y):
-                self.ghost_row, self.ghost_col = self._screen_to_board(x, y)
+            if self._is_over_board_area(x, y):
+                self.ghost_row, self.ghost_col = self._centered_anchor(x, y)
             else:
                 self.ghost_row = self.ghost_col = None
 
@@ -324,7 +338,8 @@ class GameWindow(arcade.Window):
         if button != arcade.MOUSE_BUTTON_LEFT or self.dragging is None:
             return
 
-        row, col = self._screen_to_board(x, y)
+        # Utilise le meme centrage que le ghost pour placer la piece
+        row, col = self._centered_anchor(x, y)
         self.game.try_place(self.dragging, row, col)
 
         self.dragging = None
