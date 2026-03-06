@@ -106,13 +106,13 @@ class GameWindow(arcade.Window):
 
     def _compute_sidebar_positions(self) -> dict:
         names = sorted(PIECE_COLORS.keys())
-        start_y = WINDOW_HEIGHT - 80
+        start_y = WINDOW_HEIGHT - 120
         positions = {}
         for i, name in enumerate(names):
             col_idx = i % PREVIEW_COLS
             row_idx = i // PREVIEW_COLS
             cx = SIDEBAR_X + col_idx * PREVIEW_BOX_W + PREVIEW_BOX_W // 2
-            cy = start_y - row_idx * PREVIEW_BOX_H
+            cy = start_y - row_idx * PREVIEW_BOX_H 
             positions[name] = (cx, cy)
         return positions
 
