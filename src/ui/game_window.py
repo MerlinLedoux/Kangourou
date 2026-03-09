@@ -3,6 +3,7 @@ import arcade
 from ..game import Game
 from ..pieces import PIECE_COLORS
 from ..shapes import SHAPES
+from ..solver import infeasible_cells, FeasibilityChecker
 
 # ---------------------------------------------------------------------------
 # Constantes de mise en page
@@ -85,6 +86,8 @@ class GameWindow(arcade.Window):
         self._sidebar_pos: dict = self._compute_sidebar_positions()
         self.won    = False
         self.elapsed = 0.0
+        self.blocked_cells: set = set()  # cases dans des regions bloquees
+        self.checker = FeasibilityChecker()
 
     # ------------------------------------------------------------------
     # Conversions coordonnees
@@ -193,6 +196,19 @@ class GameWindow(arcade.Window):
         self.won            = False
         self.elapsed        = 0.0
         self.dropdown_open  = False
+        self.blocked_cells  = set()
+        self.checker.reset()
+
+    # ------------------------------------------------------------------
+    # Faisabilite
+    # ------------------------------------------------------------------
+
+    def _update_feasibility(self):
+        """Recalcule la faisabilite apres chaque modification du plateau."""
+        # Heuristique rapide : coloration immediate des regions definitivement bloquees
+        self.blocked_cells = infeasible_cells(self.game.board)
+        # Solveur complet en arriere-plan : verdict definitif
+        self.checker.check(self.game.board, self.game.available_pieces)
 
     # ------------------------------------------------------------------
     # on_update
@@ -232,8 +248,13 @@ class GameWindow(arcade.Window):
         # Uniquement les cases valides
         for (r, c) in board.valid_cells:
             cx, cy = self._board_to_screen(r, c)
-            _fill(cx, cy, self.cell_size, self.cell_size, COLOR_BOARD_BG)
-            _outline(cx, cy, self.cell_size - 1, self.cell_size - 1, COLOR_GRID)
+            # Cases bloquees (region non divisible par 5) en rouge pale
+            if (r, c) in self.blocked_cells and board.grid[(r, c)] is None:
+                _fill(cx, cy, self.cell_size, self.cell_size, (80, 30, 30))
+                _outline(cx, cy, self.cell_size - 1, self.cell_size - 1, (160, 60, 60))
+            else:
+                _fill(cx, cy, self.cell_size, self.cell_size, COLOR_BOARD_BG)
+                _outline(cx, cy, self.cell_size - 1, self.cell_size - 1, COLOR_GRID)
 
     def _draw_placed_pieces(self):
         for name, (cells, row, col) in self.game.placed_pieces.items():
@@ -301,6 +322,17 @@ class GameWindow(arcade.Window):
             f"Posees : {len(self.game.placed_pieces)}   |   "
             f"{minutes:02d}:{secondes:02d}",
             BOARD_LEFT, board_top_y + 12, COLOR_TEXT, 14)
+
+        if not self.won:
+            status = self.checker.status
+            if status == "blocked":
+                arcade.draw_text(
+                    "Puzzle sans solution ! Reprenez une piece.",
+                    BOARD_LEFT, board_top_y + 34, (255, 80, 60), 13, bold=True)
+            elif status == "checking":
+                arcade.draw_text(
+                    "Analyse en cours...",
+                    BOARD_LEFT, board_top_y + 34, (180, 180, 80), 13)
 
         instructions = [
             "R : Tourner la piece",
@@ -398,6 +430,7 @@ class GameWindow(arcade.Window):
             self.game.pick_up(piece_at)
             self.dragging = piece_at
             self.drag_x, self.drag_y = x, y
+            self._update_feasibility()
 
     def on_mouse_motion(self, x, y, dx, dy):
         if self.dragging:
@@ -421,6 +454,8 @@ class GameWindow(arcade.Window):
         self.dragging = None
         self.ghost_row = self.ghost_col = None
 
+        self._update_feasibility()
+
         if self.game.is_won():
             self.won = True
 
@@ -435,6 +470,8 @@ class GameWindow(arcade.Window):
             self.ghost_row = self.ghost_col = None
             self.won    = False
             self.elapsed = 0.0
+            self.blocked_cells = set()
+            self.checker.reset()
         elif self.dragging:
             if key == arcade.key.R:
                 self.game.rotate(self.dragging)
